@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>错题记录检索</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: #f4f6fb; color: #1f2937; -webkit-font-smoothing: antialiased;
+  }
+  .app { max-width: 1180px; margin: 0 auto; padding: 32px 20px 80px; }
+
+  .page-head { margin-bottom: 22px; }
+  .page-head h1 { font-size: 26px; margin: 0 0 8px; letter-spacing: .5px; }
+  .page-head p { margin: 0; color: #6b7280; font-size: 14px; line-height: 1.6; }
+
+  .card {
+    background: #fff; border-radius: 14px; padding: 18px 20px;
+    box-shadow: 0 1px 2px rgba(16,24,40,.05), 0 8px 24px -12px rgba(16,24,40,.15);
+    margin-bottom: 18px;
+  }
+
+  /* ---------- 状态条 ---------- */
+  .status-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13.5px; color: #475569; }
+  .status-bar .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; flex: none; }
+  .status-bar.error .dot { background: #ef4444; }
+  .status-bar.loading .dot { background: #f59e0b; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+  .status-bar strong { color: #1f2937; font-weight: 600; }
+  .status-bar .badge { background: #eef2ff; color: #4338ca; padding: 3px 10px; border-radius: 999px; font-size: 12.5px; }
+  .status-bar .btn { margin-left: auto; }
+
+  .btn {
+    height: 38px; padding: 0 16px; border-radius: 10px;
+    border: 1.5px solid #dbe2ee; background: #fff; color: #374151;
+    font-size: 14px; cursor: pointer; transition: .15s; white-space: nowrap;
+  }
+  .btn:hover { border-color: #94a3b8; background: #f8fafc; }
+  .btn:active { transform: translateY(1px); }
+
+  /* ---------- 错误面板 ---------- */
+  .error-panel { display: none; margin-top: 16px; border-top: 1px dashed #e2e8f0; padding-top: 16px; }
+  .error-panel.show { display: block; }
+  .error-panel .msg { color: #b91c1c; font-size: 13.5px; line-height: 1.7; margin: 0 0 12px; }
+  .error-panel code {
+    background: #f1f5f9; padding: 2px 6px; border-radius: 6px;
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; color: #0f172a;
+  }
+  .error-panel .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+  /* ---------- 搜索区 ---------- */
+  .search-bar { display: flex; gap: 10px; }
+  .search-bar input {
+    flex: 1; min-width: 0; height: 46px;
+    padding: 0 14px 0 42px;
+    border: 1.5px solid #dbe2ee; border-radius: 10px;
+    font-size: 15px; outline: none; transition: .18s;
+    background-color: #fff;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: 14px center;
+  }
+  .search-bar input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
+  .search-bar .btn { height: 46px; }
+
+  .opts {
+    display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
+    margin-top: 14px; font-size: 13px; color: #475569;
+  }
+  .opts label { display: inline-flex; align-items: center; gap: 6px; }
+  .opts select {
+    height: 34px; border-radius: 8px; border: 1.5px solid #dbe2ee;
+    padding: 0 8px; background: #fff; font-size: 13px; color: #334155;
+    outline: none; cursor: pointer; max-width: 190px;
+  }
+  .stat { margin-left: auto; color: #2563eb; font-weight: 600; font-size: 13px; }
+
+  /* ---------- 结果表格 ---------- */
+  .table-wrap { overflow: auto; max-height: 66vh; border: 1px solid #e6ebf3; border-radius: 10px; }
+  table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13.5px; }
+  thead th {
+    position: sticky; top: 0; z-index: 2;
+    background: #f1f5fb; color: #334155; text-align: left;
+    padding: 11px 14px; font-weight: 600; white-space: nowrap;
+    border-bottom: 1px solid #e2e8f0; user-select: none;
+  }
+  thead th.sortable { cursor: pointer; }
+  thead th.sortable:hover { background: #e8eefb; color: #1d4ed8; }
+  thead th.sorted-asc::after { content: ' ▲'; font-size: 10px; color: #2563eb; }
+  thead th.sorted-desc::after { content: ' ▼'; font-size: 10px; color: #2563eb; }
+
+  tbody td {
+    padding: 10px 14px; border-bottom: 1px solid #f1f5f9;
+    color: #374151; vertical-align: top; max-width: 380px; word-break: break-word;
+  }
+  tbody tr:hover td { background: #f8fbff; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  td.idx, th.idx {
+    width: 60px; color: #94a3b8; text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  td.empty { text-align: center; padding: 46px 0; color: #94a3b8; }
+
+  mark { background: #fff3b0; color: #92400e; border-radius: 3px; padding: 0 1px; }
+
+  /* ---------- 分页 ---------- */
+  .pager { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  .pager button {
+    height: 34px; padding: 0 12px; font-size: 13px; border-radius: 8px;
+    border: 1.5px solid #dbe2ee; background: #fff; color: #374151; cursor: pointer;
+  }
+  .pager button:hover:not(:disabled) { border-color: #93b4f5; color: #1d4ed8; }
+  .pager button:disabled { opacity: .45; cursor: not-allowed; }
+  .page-info { font-size: 13px; color: #64748b; margin: 0 6px; }
+
+  @media (max-width: 640px) {
+    .app { padding: 20px 12px 60px; }
+    .search-bar { flex-direction: column; }
+    .search-bar .btn { height: 42px; }
+    .stat { margin-left: 0; width: 100%; }
+    .page-head h1 { font-size: 21px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="page-head">
+    <h1>错题记录检索</h1>
+    <p>输入关键词即可查询记录，支持多个关键词（用空格分隔）与整段短语（用英文引号包裹）。</p>
+  </div>
+
+  <!-- 数据状态 -->
+  <section class="card">
+    <div class="status-bar loading" id="statusBar">
+      <span class="dot"></span>
+      <span id="statusText">正在加载数据…</span>
+      <button class="btn" id="reloadBtn" hidden>重新加载</button>
+    </div>
+
+    <div class="error-panel" id="errorPanel">
+      <p class="msg" id="errorMsg"></p>
+      <div class="actions">
+        <button class="btn" id="pickBtn">改为手动选择文件</button>
+      </div>
+      <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden />
+    </div>
+  </section>
+
+  <!-- 搜索 -->
+  <section class="card" id="searchCard" hidden>
+    <div class="search-bar">
+      <input id="searchInput" type="search" autocomplete="off"
+             placeholder="输入关键词，多个关键词用空格分隔，例如：张三 北京" />
+      <button class="btn" id="clearBtn">清空</button>
+    </div>
+    <div class="opts">
+      <label>工作表 <select id="sheetSelect"></select></label>
+      <label>搜索范围 <select id="fieldSelect"></select></label>
+      <label>每页
+        <select id="pageSizeSelect">
+          <option value="20">20 条</option>
+          <option value="50" selected>50 条</option>
+          <option value="100">100 条</option>
+          <option value="200">200 条</option>
+        </select>
+      </label>
+      <button class="btn" id="exportBtn">导出结果 CSV</button>
+      <span class="stat" id="stat"></span>
+    </div>
+  </section>
+
+  <!-- 结果 -->
+  <section class="card" id="resultCard" hidden>
+    <div class="table-wrap" id="tableWrap">
+      <table id="resultTable"></table>
+    </div>
+    <div class="pager" id="pager"></div>
+  </section>
+
+</div>
+
+<script>
+/* =====================================================================
+   ⚙️ 配置：把 Excel 文件放在与 index.html 同一个目录下，
+   然后在这里填写文件名（区分大小写，需带扩展名）。
+   支持 .xlsx / .xls / .csv
+   ===================================================================== */
+const DATA_FILE = 'data.xlsx';
+
+/* =========================== 状态 =========================== */
+const state = {
+  workbook: null,
+  headers: [],
+  rows: [],
+  filtered: [],
+  terms: [],
+  field: 'all',
+  page: 1,
+  pageSize: 50,
+  sortCol: -1,
+  sortAsc: true
+};
+
+/* =========================== DOM =========================== */
+const statusBar   = document.getElementById('statusBar');
+const statusText  = document.getElementById('statusText');
+const reloadBtn   = document.getElementById('reloadBtn');
+const errorPanel  = document.getElementById('errorPanel');
+const errorMsg    = document.getElementById('errorMsg');
+const pickBtn     = document.getElementById('pickBtn');
+const fileInput   = document.getElementById('fileInput');
+
+const searchCard  = document.getElementById('searchCard');
+const resultCard  = document.getElementById('resultCard');
+const searchInput = document.getElementById('searchInput');
+const clearBtn    = document.getElementById('clearBtn');
+const sheetSelect = document.getElementById('sheetSelect');
+const fieldSelect = document.getElementById('fieldSelect');
+const pageSizeSel = document.getElementById('pageSizeSelect');
+const exportBtn   = document.getElementById('exportBtn');
+const statEl      = document.getElementById('stat');
+
+const table       = document.getElementById('resultTable');
+const tableWrap   = document.getElementById('tableWrap');
+const pager       = document.getElementById('pager');
+
+/* =========================== 工具函数 =========================== */
+function escapeHtml(v) {
+  return String(v).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+/** 解析关键词：支持 "带空格的短语" 以及空格分隔的多个关键词 */
+function parseTerms(raw) {
+  const terms = [];
+  const re = /"([^"]*)"|(\S+)/g;
+  let m;
+  while ((m = re.exec(raw)) !== null) {
+    const t = (m[1] !== undefined ? m[1] : m[2]).trim();
+    if (t) terms.push(t);
+  }
+  return terms;
+}
+
+/** 高亮：先在原文上定位匹配区间，再拼接转义后的 HTML */
+function highlight(text, terms) {
+  const s = String(text ?? '');
+  if (!terms || !terms.length) return escapeHtml(s);
+
+  const lower = s.toLowerCase();
+  const ranges = [];
+  terms.forEach(t => {
+    const tl = t.toLowerCase();
+    if (!tl) return;
+    let idx = 0;
+    while ((idx = lower.indexOf(tl, idx)) !== -1) {
+      ranges.push([idx, idx + tl.length]);
+      idx += tl.length;
+    }
+  });
+  if (!ranges.length) return escapeHtml(s);
+
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const r of ranges) {
+    const last = merged[merged.length - 1];
+    if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
+    else merged.push([r[0], r[1]]);
+  }
+
+  let html = '', pos = 0;
+  for (const [st, en] of merged) {
+    html += escapeHtml(s.slice(pos, st));
+    html += '<mark>' + escapeHtml(s.slice(st, en)) + '</mark>';
+    pos = en;
+  }
+  html += escapeHtml(s.slice(pos));
+  return html;
+}
+
+function toNumber(v) {
+  const t = String(v).replace(/,/g, '').trim();
+  if (t === '') return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+function setStatus(kind, html) {
+  statusBar.className = 'status-bar' + (kind ? ' ' + kind : '');
+  statusText.innerHTML = html;
+}
+
+/* =========================== 加载数据 =========================== */
+async function loadData() {
+  errorPanel.classList.remove('show');
+  reloadBtn.hidden = true;
+  setStatus('loading', '正在加载数据…');
+
+  if (typeof XLSX === 'undefined') {
+    setStatus('error', '解析库加载失败');
+    showError('无法加载 Excel 解析库（可能是网络问题）。请检查网络后刷新页面，或点击下方按钮手动选择文件。');
+    return;
+  }
+
+  try {
+    const res = await fetch(DATA_FILE + '?v=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + res.statusText);
+
+    const buf = await res.arrayBuffer();
+    if (!buf.byteLength) throw new Error('文件内容为空');
+
+    const wb = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: true });
+    if (!wb.SheetNames || !wb.SheetNames.length) throw new Error('文件中没有工作表');
+
+    state.workbook = wb;
+
+    // 工作表下拉
+    sheetSelect.innerHTML = '';
+    wb.SheetNames.forEach(n => {
+      const o = document.createElement('option');
+      o.value = n; o.textContent = n;
+      sheetSelect.appendChild(o);
+    });
+
+    loadSheet(wb.SheetNames[0]);
+
+    setStatus('', `数据已就绪 · <span class="badge">${escapeHtml(DATA_FILE)}</span>`);
+    reloadBtn.hidden = false;
+    searchCard.hidden = false;
+    resultCard.hidden = false;
+    searchInput.focus();
+  } catch (err) {
+    handleLoadError(err);
+  }
+}
+
+function handleLoadError(err) {
+  setStatus('error', '数据加载失败');
+  reloadBtn.hidden = false;
+
+  const isFileProtocol = location.protocol === 'file:';
+  let msg = `无法读取 <code>${escapeHtml(DATA_FILE)}</code>：${escapeHtml(err.message)}。<br>`;
+
+  if (isFileProtocol) {
+    msg += `当前是以 <code>file://</code> 方式直接打开页面，浏览器出于安全限制不允许网页读取本地文件。<br>
+            请在该目录下启动一个本地服务器后再访问，例如：<br>
+            <code>python -m http.server 8000</code><br>
+            然后浏览器打开 <code>http://localhost:8000</code>。`;
+  } else {
+    msg += `请确认文件 <code>${escapeHtml(DATA_FILE)}</code> 确实与 <code>index.html</code> 位于同一目录，
+            且文件名（含大小写与扩展名）与配置一致。`;
+  }
+
+  showError(msg);
+}
+
+function showError(html) {
+  errorMsg.innerHTML = html;
+  errorPanel.classList.add('show');
+}
+
+/* =========================== 解析工作表 =========================== */
+function loadSheet(name) {
+  sheetSelect.value = name;
+
+  const ws = state.workbook.Sheets[name];
+  const aoa = XLSX.utils.sheet_to_json(ws, {
+    header: 1, defval: '', raw: false, blankrows: false
+  });
+
+  if (!aoa.length) {
+    state.headers = [];
+    state.rows = [];
+  } else {
+    state.headers = aoa[0].map((h, i) => {
+      const s = String(h == null ? '' : h).trim();
+      return s || ('列' + (i + 1));
+    });
+
+    const colCount = state.headers.length;
+    state.rows = aoa.slice(1).map(r => {
+      const row = new Array(colCount);
+      for (let i = 0; i < colCount; i++) {
+        const v = r[i];
+        row[i] = (v == null) ? '' : String(v);
+      }
+      return row;
+    }).filter(row => row.some(c => c.trim() !== ''));
+  }
+
+  state.sortCol = -1;
+  state.sortAsc = true;
+  state.page = 1;
+  state.field = 'all';
+  searchInput.value = '';
+
+  buildFieldSelect();
+  updateView();
+}
+
+function buildFieldSelect() {
+  fieldSelect.innerHTML = '<option value="all">全部字段</option>';
+  state.headers.forEach((h, i) => {
+    const o = document.createElement('option');
+    o.value = String(i);
+    o.textContent = h;
+    fieldSelect.appendChild(o);
+  });
+  fieldSelect.value = 'all';
+}
+
+/* =========================== 搜索 =========================== */
+function updateView() {
+  const raw = searchInput.value.trim();
+  state.terms = raw ? parseTerms(raw) : [];
+  const termsLower = state.terms.map(t => t.toLowerCase());
+  const field = state.field;
+
+  // 1) 过滤
+  if (!termsLower.length) {
+    state.filtered = state.rows.slice();
+  } else {
+    state.filtered = state.rows.filter(row => {
+      let hay;
+      if (field === 'all') hay = row.join('\u0001').toLowerCase();
+      else hay = String(row[field] ?? '').toLowerCase();
+      return termsLower.every(t => hay.includes(t));
+    });
+  }
+
+  // 2) 排序
+  if (state.sortCol >= 0 && state.sortCol < state.headers.length) {
+    const c = state.sortCol;
+    const dir = state.sortAsc ? 1 : -1;
+    state.filtered.sort((a, b) => {
+      const x = a[c] ?? '', y = b[c] ?? '';
+      const nx = toNumber(x), ny = toNumber(y);
+      if (nx !== null && ny !== null) return (nx - ny) * dir;
+      return x.localeCompare(y, 'zh-Hans-CN', { numeric: true }) * dir;
+    });
+  }
+
+  render();
+}
+
+function render() {
+  const total = state.filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / state.pageSize));
+  state.page = Math.min(Math.max(1, state.page), totalPages);
+
+  const start = (state.page - 1) * state.pageSize;
+  const rows = state.filtered.slice(start, start + state.pageSize);
+
+  // 表头
+  let html = '<thead><tr><th class="idx">#</th>';
+  state.headers.forEach((h, i) => {
+    let cls = 'sortable';
+    if (state.sortCol === i) cls += state.sortAsc ? ' sorted-asc' : ' sorted-desc';
+    html += `<th class="${cls}" data-col="${i}">${escapeHtml(h)}</th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  // 数据行
+  if (!rows.length) {
+    html += `<tr><td class="empty" colspan="${state.headers.length + 1}">没有找到匹配的记录</td></tr>`;
+  } else {
+    rows.forEach((row, ri) => {
+      html += '<tr>';
+      html += `<td class="idx">${start + ri + 1}</td>`;
+      for (let i = 0; i < state.headers.length; i++) {
+        html += `<td>${highlight(row[i], state.terms)}</td>`;
+      }
+      html += '</tr>';
+    });
+  }
+  html += '</tbody>';
+  table.innerHTML = html;
+
+  // 表头排序
+  table.querySelectorAll('th[data-col]').forEach(th => {
+    th.addEventListener('click', () => {
+      const c = Number(th.dataset.col);
+      if (state.sortCol === c) state.sortAsc = !state.sortAsc;
+      else { state.sortCol = c; state.sortAsc = true; }
+      updateView();
+    });
+  });
+
+  // 统计
+  let info = `共 ${state.rows.length} 条记录，匹配 ${total} 条`;
+  if (state.terms.length) info += `（关键词：${state.terms.join(' + ')}）`;
+  statEl.textContent = info;
+
+  renderPager(totalPages, total);
+}
+
+function renderPager(totalPages, total) {
+  if (!total) { pager.innerHTML = ''; return; }
+  const p = state.page;
+
+  pager.innerHTML = `
+    <button ${p <= 1 ? 'disabled' : ''} data-page="1">首页</button>
+    <button ${p <= 1 ? 'disabled' : ''} data-page="${p - 1}">上一页</button>
+    <span class="page-info">第 ${p} / ${totalPages} 页</span>
+    <button ${p >= totalPages ? 'disabled' : ''} data-page="${p + 1}">下一页</button>
+    <button ${p >= totalPages ? 'disabled' : ''} data-page="${totalPages}">末页</button>
+  `;
+
+  pager.querySelectorAll('button[data-page]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const pg = Number(btn.dataset.page);
+      if (pg >= 1 && pg <= totalPages && pg !== state.page) {
+        state.page = pg;
+        render();
+        tableWrap.scrollTop = 0;
+      }
+    });
+  });
+}
+
+/* =========================== 导出 CSV =========================== */
+function exportCSV() {
+  if (!state.filtered.length) { alert('当前没有可导出的结果。'); return; }
+
+  const esc = v => {
+    const s = String(v ?? '');
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+
+  const lines = [state.headers.map(esc).join(',')];
+  state.filtered.forEach(r => lines.push(r.map(esc).join(',')));
+
+  const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '搜索结果_' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/* =========================== 事件绑定 =========================== */
+reloadBtn.addEventListener('click', loadData);
+
+// 兜底：手动选择文件
+pickBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', e => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array', cellDates: true });
+      state.workbook = wb;
+      sheetSelect.innerHTML = '';
+      wb.SheetNames.forEach(n => {
+        const o = document.createElement('option');
+        o.value = n; o.textContent = n;
+        sheetSelect.appendChild(o);
+      });
+      loadSheet(wb.SheetNames[0]);
+      errorPanel.classList.remove('show');
+      setStatus('', `数据已就绪 · <span class="badge">${escapeHtml(f.name)}</span>`);
+      reloadBtn.hidden = false;
+      searchCard.hidden = false;
+      resultCard.hidden = false;
+      searchInput.focus();
+    } catch (err) {
+      showError('文件解析失败：' + escapeHtml(err.message));
+    }
+  };
+  reader.onerror = () => showError('文件读取失败，请重试。');
+  reader.readAsArrayBuffer(f);
+  fileInput.value = '';
+});
+
+// 切换工作表
+sheetSelect.addEventListener('change', () => loadSheet(sheetSelect.value));
+
+// 搜索输入（防抖）
+let debounceTimer = null;
+searchInput.addEventListener('input', () => {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => { state.page = 1; updateView(); }, 180);
+});
+searchInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    clearTimeout(debounceTimer);
+    state.page = 1;
+    updateView();
+  }
+});
+
+// 清空
+clearBtn.addEventListener('click', () => {
+  searchInput.value = '';
+  state.page = 1;
+  updateView();
+  searchInput.focus();
+});
+
+// 搜索范围
+fieldSelect.addEventListener('change', () => {
+  state.field = fieldSelect.value === 'all' ? 'all' : Number(fieldSelect.value);
+  state.page = 1;
+  updateView();
+});
+
+// 每页条数
+pageSizeSel.addEventListener('change', () => {
+  state.pageSize = Number(pageSizeSel.value) || 50;
+  state.page = 1;
+  updateView();
+});
+
+// 导出
+exportBtn.addEventListener('click', exportCSV);
+
+/* =========================== 启动 =========================== */
+loadData();
+</script>
+</body>
+</html>
